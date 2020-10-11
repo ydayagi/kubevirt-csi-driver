@@ -1,0 +1,145 @@
+#TODO: Force DaemonSet to not run on master.
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: kubevirt-csi-node
+  namespace: kubevirt-csi-driver
+spec:
+  selector:
+    matchLabels:
+      app: kubevirt-csi-driver
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: kubevirt-csi-driver
+    spec:
+      serviceAccount: kubevirt-csi-node-sa
+      initContainers:
+        - name: prepare-kubevirt-config
+          env:
+            - name: OVIRT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kubevirt-credentials
+                  key: kubevirt_url
+            - name: OVIRT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: kubevirt-credentials
+                  key: kubevirt_username
+            - name: OVIRT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubevirt-credentials
+                  key: kubevirt_password
+            - name: OVIRT_CAFILE
+              valueFrom:
+                secretKeyRef:
+                  name: kubevirt-credentials
+                  key: kubevirt_cafile
+            - name: OVIRT_INSECURE
+              valueFrom:
+                secretKeyRef:
+                  name: kubevirt-credentials
+                  key: kubevirt_insecure
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              #!/bin/sh
+              cat << EOF > /tmp/config/kubevirt-config.yaml
+              kubevirt_url: $OVIRT_URL
+              kubevirt_username: $OVIRT_USERNAME
+              kubevirt_password: $OVIRT_PASSWORD
+              kubevirt_cafile: $OVIRT_CAFILE
+              kubevirt_insecure: $OVIRT_INSECURE
+              EOF
+          volumeMounts:
+            - name: config
+              mountPath: /tmp/config
+
+      containers:
+        - name: csi-driver-registrar
+          imagePullPolicy: Always
+          image: quay.io/k8scsi/csi-node-driver-registrar:v1.2.0
+          args:
+            - "--v=5"
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/kubevirt.org/csi.sock"
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+        - name: kubevirt-csi-driver
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+          imagePullPolicy: Always
+          image: quay.io/kubevirt/csi-driver:latest
+          args:
+            - "--endpoint=unix:/csi/csi.sock"
+            - "--namespace=kubevirt-csi-driver"
+            - "--node-name=$(KUBE_NODE_NAME)"
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OVIRT_CONFIG
+              value: /tmp/config/kubevirt-config.yaml
+          volumeMounts:
+#            - name: kubelet-dir
+#              mountPath: /var/lib/kubelet
+#              mountPropagation: "Bidirectional"
+            - name: socket-dir
+              mountPath: /csi
+            - name: config
+              mountPath: /tmp/config/
+            - name: plugin-dir
+              mountPath: /var/lib/kubelet/plugins
+              mountPropagation: Bidirectional
+            - name: host-dev
+              mountPath: /dev
+            - name: udev
+              mountPath: /run/udev
+            - name: mountpoint-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+      volumes:
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: Directory
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins
+            type: Directory
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/kubevirt.org/
+            type: DirectoryOrCreate
+        - name: host-dev
+          hostPath:
+            path: /dev
+        - name: udev
+          hostPath:
+            path: /run/udev
+        - name: config
+          emptyDir: {}
+        - name: mountpoint-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
