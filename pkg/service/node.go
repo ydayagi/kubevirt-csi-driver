@@ -1,13 +1,11 @@
 package service
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"k8s.io/client-go/kubernetes"
@@ -36,18 +34,17 @@ func (n *NodeService) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 	klog.Infof("Staging volume %s with %+v", req.VolumeId, req)
 
 	// get the VMI volumes which are under VMI.spec.volumes
-	// The volume ID to prepare should
+	// volumeID = serialID = kubevirt's DataVolume.metadata.uid
 
 	device, err := getDeviceBySerialID(req.VolumeId)
 	if err != nil {
-		klog.Errorf("Failed to fetch device by attachment-id for volume %s on node %s", req.VolumeId, n.nodeId)
+		klog.Errorf("Failed to fetch device by serialID %s on node %s", req.VolumeId, n.nodeId)
 		return nil, err
 	}
 
 	// is there a filesystem on this device?
-	//filesystem, err := getDeviceInfo(device)
 	if device.Fstype != "" {
-		klog.Infof("Detected fs %s, returning", device.Fstype)
+		klog.Infof("Detected fs %s", device.Fstype)
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
@@ -64,15 +61,16 @@ func (n *NodeService) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 }
 
 func (n *NodeService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	// nothing to do here, we don't erase the filesystem of a device.
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
 func (n *NodeService) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	// volumeID is kubevirt's serialID
+	// volumeID = serialID = kubevirt's DataVolume.metadata.uid
 	// TODO link to kubevirt code
 	device, err := getDeviceBySerialID(req.VolumeId)
 	if err != nil {
-		klog.Errorf("Failed to fetch device by attachment-id for volume %s on node %s", req.VolumeId, n.nodeId)
+		klog.Errorf("Failed to fetch device by serialID %s on node %s", req.VolumeId, n.nodeId)
 		return nil, err
 	}
 
@@ -171,32 +169,6 @@ func getDeviceBySerialID(serialID string) (Device, error) {
 	return Device{}, errors.New("couldn't find device by serial id")
 }
 
-// getDeviceInfo will return the first Device which is a partition and its filesystem.
-// if the given Device disk has no partition then an empty zero valued device will return
-func getDeviceInfo(device string) (string, error) {
-	devicePath, err := filepath.EvalSymlinks(device)
-	if err != nil {
-		klog.Errorf("Unable to evaluate symlink for device %s", device)
-		return "", errors.New(err.Error())
-	}
-
-	klog.Info("lsblk -nro FSTYPE ", devicePath)
-	cmd := exec.Command("lsblk", "-nro", "FSTYPE", devicePath)
-	out, err := cmd.Output()
-	exitError, incompleteCmd := err.(*exec.ExitError)
-	if err != nil && incompleteCmd {
-		return "", errors.New(err.Error() + "lsblk failed with " + string(exitError.Stderr))
-	}
-
-	reader := bufio.NewReader(bytes.NewReader(out))
-	line, _, err := reader.ReadLine()
-	if err != nil {
-		klog.Errorf("Error occured while trying to read lsblk output")
-		return "", err
-	}
-	return string(line), nil
-}
-
 func makeFS(device string, fsType string) error {
 	// caution, use force flag when creating the filesystem if it doesn't exit.
 	klog.Infof("Mounting device %s, with FS %s", device, fsType)
@@ -222,35 +194,4 @@ func makeFS(device string, fsType string) error {
 	}
 
 	return nil
-}
-
-// isMountpoint find out if a given directory is a real mount point
-func isMountpoint(mountDir string) bool {
-	cmd := exec.Command("findmnt", mountDir)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		return false
-	}
-	return true
-}
-
-func baseDevicePathByInterface(diskInterface string) (string, error) {
-
-	//TODO replace this non-sense with lsblk  -o SERIAL,PATH -J which creates
-	// json representaion of block devices serial and path
-	// {
-	// "blockdevices": [
-	//    {"serial":"S35ENX0J663758", "path":"/dev/nvme0n1"},
-	// ]
-
-	switch diskInterface {
-	case "virtio":
-		return "/dev/disk/by-id/virtio-", nil
-	case "scsi":
-		return "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_", nil
-	}
-	return "", errors.New("device type is unsupported")
-
 }

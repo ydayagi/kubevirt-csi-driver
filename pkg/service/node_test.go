@@ -6,6 +6,6 @@ func TestDeviceExtraction(t *testing.T) {
 
 	device, err := getDeviceBySerialID("S35ENX0J663758")
 	t.Log(err)
-	t.Log(device)
+	t.Logf("device %+v", device)
 
 }
