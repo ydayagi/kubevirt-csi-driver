@@ -9,8 +9,8 @@ import (
 
 var (
 	// set by ldflags
-	VendorVersion = "0.1.1"
-	VendorName    = "csi.kubevirt.org"
+	VendorVersion = "0.1.0"
+	VendorName    = "csi.kubevirt.io"
 )
 
 type kubevirtCSIDriver struct {
