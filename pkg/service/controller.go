@@ -4,26 +4,24 @@ import (
 	"strconv"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/ovirt/csi-driver/internal/ovirt"
-	ovirtsdk "github.com/ovirt/go-ovirt"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/kubevirt/csi-driver/internal/kubevirt"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	ParameterStorageDomainName = "storageDomainName"
 	ParameterThinProvisioning  = "thinProvisioning"
-	minimumDiskSize            = 1 * 1024 * 1024
 )
 
 //ControllerService implements the controller interface
 type ControllerService struct {
-	ovirtClient client.Client
-	client      client.Client
+	infraClusterClient kubernetes.Clientset
+	kubevirtClient 	kubevirt.Client
 }
 
 var ControllerCaps = []csi.ControllerServiceCapability_RPC_Type{
@@ -34,152 +32,60 @@ var ControllerCaps = []csi.ControllerServiceCapability_RPC_Type{
 //CreateVolume creates the disk for the request, unattached from any VM
 func (c *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	klog.Infof("Creating disk %s", req.Name)
-	// idempotence first - see if disk already exists, ovirt creates disk by name(alias in ovirt as well)
-	conn, err := c.ovirtClient.GetConnection()
-	if err != nil {
-		klog.Errorf("Failed to get ovirt client connection")
-		return nil, err
-	}
 
-	diskByName, err := conn.SystemService().DisksService().List().Search(req.Name).Send()
-	if err != nil {
-		return nil, err
-	}
+	//1. idempotence first - see if disk already exists, kubevirt creates disk by name(alias in kubevirt as well)
+	//c.kubevirtClient.ListDataVolumeNames(req.GetName())
 
-	// if exists we're done
-	if disks, ok := diskByName.Disks(); ok && len(disks.Slice()) == 1 {
-		disk := disks.Slice()[0]
-		return &csi.CreateVolumeResponse{
-			Volume: &csi.Volume{
-				CapacityBytes:      disk.MustProvisionedSize(),
-				VolumeId:           disk.MustId(),
-				VolumeContext:      nil,
-				ContentSource:      nil,
-				AccessibleTopology: nil,
-			},
-		}, nil
-	}
+	// 2. create the data volume if it doesn't exist.
+	// TODO kubevirt client needs a Creat function.
 
-	// TODO rgolan the default in case of error would be non thin - change it?
-	thinProvisioning, _ := strconv.ParseBool(req.Parameters[ParameterThinProvisioning])
+	// TODO support for thin/thick provisioning from the storage class parameters
+	_, _ = strconv.ParseBool(req.Parameters[ParameterThinProvisioning])
 
-	provisionedSize := req.CapacityRange.GetRequiredBytes()
-	if provisionedSize < minimumDiskSize {
-		provisionedSize = minimumDiskSize
-	}
-
-	// creating the disk
-	disk, err := ovirtsdk.NewDiskBuilder().
-		Name(req.Name).
-		StorageDomainsBuilderOfAny(*ovirtsdk.NewStorageDomainBuilder().Name(req.Parameters[ParameterStorageDomainName])).
-		ProvisionedSize(provisionedSize).
-		ReadOnly(false).
-		Format(ovirtsdk.DISKFORMAT_COW).
-		Sparse(thinProvisioning).
-		Build()
-
-	if err != nil {
-		// failed to construct the disk
-		return nil, err
-	}
-
-	createDisk, err := conn.SystemService().DisksService().
-		Add().
-		Disk(disk).
-		Send()
-	if err != nil {
-		// failed to create the disk
-		klog.Errorf("Failed creating disk %s", req.Name)
-		return nil, err
-	}
+	// 3. return a response TODO stub values for now
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
-			CapacityBytes: createDisk.MustDisk().MustProvisionedSize(),
-			VolumeId:      createDisk.MustDisk().MustId(),
+			CapacityBytes:      1024,
+			VolumeId:           "uuidofthedatavolume",
 		},
 	}, nil
 }
 
-//DeleteVolume removed the disk from oVirt
+//DeleteVolume removed the data volume from kubevirt
 func (c *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-	klog.Infof("Removing disk %s", req.VolumeId)
-	// idempotence first - see if disk already exists, ovirt creates disk by name(alias in ovirt as well)
-	conn, err := c.ovirtClient.GetConnection()
-	if err != nil {
-		klog.Errorf("Failed to get ovirt client connection")
-		return nil, err
-	}
+	klog.Infof("Removing data volume with ID %s", req.VolumeId)
 
-	diskService := conn.SystemService().DisksService().DiskService(req.VolumeId)
+	// 1. get data volume name by uid by filtering the list of all volumes of namespace. (there is not getById)
+	// err := c.kubevirtClient.ListDataVolumeNames()
 
-	_, err = diskService.Get().Send()
-	// if doesn't exists we're done
-	if err != nil {
-		return &csi.DeleteVolumeResponse{}, nil
-	}
-	_, err = diskService.Remove().Send()
-	if err != nil {
-		return nil, err
-	}
-
-	klog.Infof("Finished removing disk %s", req.VolumeId)
-	return &csi.DeleteVolumeResponse{}, nil
+	// 2. delete the volume
+	err := c.kubevirtClient.DeleteDataVolume("fill this","fill this", true)
+	return &csi.DeleteVolumeResponse{}, err
 }
 
-// ControllerPublishVolume takes a volume, which is an oVirt disk, and attaches it to a node, which is an oVirt VM.
+// ControllerPublishVolume takes a volume, which is an kubevirt disk, and attaches it to a node, which is an kubevirt VM.
 func (c *ControllerService) ControllerPublishVolume(
 	ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 
-	klog.Infof("Attaching Disk %s to VM %s", req.VolumeId, req.NodeId)
-	conn, err := c.ovirtClient.GetConnection()
-	if err != nil {
-		klog.Errorf("Failed to get ovirt client connection")
-		return nil, err
-	}
+	// req.NodeId == kubevirt VM name
+	klog.Infof("Attaching DataVolume %s to VM %s", req.VolumeId, req.NodeId)
 
-	vmService := conn.SystemService().VmsService().VmService(req.NodeId)
+	// 1. get DataVolume by ID
 
-	attachmentBuilder := ovirtsdk.NewDiskAttachmentBuilder().
-		DiskBuilder(ovirtsdk.NewDiskBuilder().Id(req.VolumeId)).
-		Interface(ovirtsdk.DISKINTERFACE_VIRTIO_SCSI).
-		Bootable(false).
-		Active(true)
+	// 2. hotplug DataVolume to VMI using subresource - see virtctl/addvolume for reference
 
-	_, err = vmService.
-		DiskAttachmentsService().
-		Add().
-		Attachment(attachmentBuilder.MustBuild()).
-		Send()
-	if err != nil {
-		return nil, err
-	}
-	klog.Infof("Attached Disk %v to VM %s", req.VolumeId, req.NodeId)
 	return &csi.ControllerPublishVolumeResponse{}, nil
 }
 
 //ControllerUnpublishVolume detaches the disk from the VM.
 func (c *ControllerService) ControllerUnpublishVolume(_ context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
-	klog.Infof("Detaching Disk %s from VM %s", req.VolumeId, req.NodeId)
-	conn, err := c.ovirtClient.GetConnection()
-	if err != nil {
-		klog.Errorf("Failed to get ovirt client connection")
-		return nil, err
-	}
+	// req.NodeId == kubevirt VM name
+	klog.Infof("Detaching DataVolume %s from VM %s", req.VolumeId, req.NodeId)
 
-	attachment, err := diskAttachmentByVmAndDisk(conn, req.NodeId, req.VolumeId)
-	if err != nil {
-		klog.Errorf("Failed to get disk attachment %s for VM %s, returning OK", req.VolumeId, req.NodeId)
-		return &csi.ControllerUnpublishVolumeResponse{}, nil
-	}
-	_, err = conn.SystemService().VmsService().VmService(req.NodeId).
-		DiskAttachmentsService().
-		AttachmentService(attachment.MustId()).
-		Remove().
-		Send()
+	// 1. get DataVolume by ID
 
-	if err != nil {
-		return nil, err
-	}
+	// 2. hot-unplug DataVolume to VMI using subresource - see virtctl/removevolume for reference
+
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
 
@@ -234,4 +140,14 @@ func (c *ControllerService) ControllerGetCapabilities(context.Context, *csi.Cont
 		)
 	}
 	return &csi.ControllerGetCapabilitiesResponse{Capabilities: caps}, nil
+}
+
+func (c *ControllerService) ControllerGetVolume(ctx context.Context, request *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
+
+	return &csi.ControllerGetVolumeResponse{
+		Volume: &csi.Volume{
+			CapacityBytes: 0,
+			VolumeId:      "TODO",
+		},
+	}, nil
 }

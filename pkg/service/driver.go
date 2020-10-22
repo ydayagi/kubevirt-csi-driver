@@ -1,7 +1,8 @@
 package service
 
 import (
-	"github.com/ovirt/csi-driver/internal/ovirt"
+	"github.com/kubevirt/csi-driver/internal/kubevirt"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -9,32 +10,30 @@ import (
 var (
 	// set by ldflags
 	VendorVersion = "0.1.1"
-	VendorName    = "csi.ovirt.org"
+	VendorName    = "csi.kubevirt.org"
 )
 
-type OvirtCSIDriver struct {
+type kubevirtCSIDriver struct {
 	*IdentityService
 	*ControllerService
 	*NodeService
-	nodeId      string
-	ovirtClient *ovirt.Client
-	Client      client.Client
+	nodeId             string
+	infraClusterClient client.Client
+	Client             client.Client
 }
 
-// NewOvirtCSIDriver creates a driver instance
-func NewOvirtCSIDriver(underClusterClientSet client.Client, client client.Client, nodeId string) *OvirtCSIDriver {
-	d := OvirtCSIDriver{
-		IdentityService:   &IdentityService{},
-		ControllerService: &ControllerService{ovirtClient: underClusterClientSet, client: client},
-		NodeService:       &NodeService{nodeId: nodeId, ovirtClient: underClusterClientSet},
-		ovirtClient:       underClusterClientSet,
-		Client:            client,
+// NewkubevirtCSIDriver creates a driver instance
+func NewkubevirtCSIDriver(infraClusterClient kubernetes.Clientset, client kubevirt.Client, nodeId string) *kubevirtCSIDriver {
+	d := kubevirtCSIDriver{
+		IdentityService:    &IdentityService{},
+		ControllerService:  &ControllerService{infraClusterClient: infraClusterClient},
+		NodeService:        &NodeService{nodeId: nodeId, kubevirtClient: client},
 	}
 	return &d
 }
 
 // Run will initiate the grpc services Identity, Controller, and Node.
-func (driver *OvirtCSIDriver) Run(endpoint string) {
+func (driver *kubevirtCSIDriver) Run(endpoint string) {
 	// run the gRPC server
 	klog.Info("Setting the rpc server")
 

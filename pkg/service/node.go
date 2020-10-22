@@ -3,69 +3,58 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/mount"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/ovirt/csi-driver/internal/ovirt"
-	ovirtsdk "github.com/ovirt/go-ovirt"
+
+	"github.com/kubevirt/csi-driver/internal/kubevirt"
+	//kubevirtv1 "kubevirt.io/client-go/api/v1"
 	"golang.org/x/net/context"
 	"k8s.io/klog"
 )
 
 type NodeService struct {
-	nodeId      string
-	ovirtClient *ovirt.Client
+	nodeId             string
+	infraClusterClient kubernetes.Clientset
+	kubevirtClient     kubevirt.Client
 }
 
 var NodeCaps = []csi.NodeServiceCapability_RPC_Type{
 	csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
 }
 
-func baseDevicePathByInterface(diskInterface ovirtsdk.DiskInterface) (string, error) {
-	switch diskInterface {
-	case ovirtsdk.DISKINTERFACE_VIRTIO:
-		return "/dev/disk/by-id/virtio-", nil
-	case ovirtsdk.DISKINTERFACE_VIRTIO_SCSI:
-		return "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_", nil
-	}
-	return "", errors.New("device type is unsupported")
-}
-
+// NodeStageVolume prepares the volume for usage. If it's an FS type it creates a file system on the volume.
 func (n *NodeService) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	klog.Infof("Staging volume %s with %+v", req.VolumeId, req)
-	conn, err := n.ovirtClient.GetConnection()
-	if err != nil {
-		klog.Errorf("Failed to get ovirt client connection")
-		return nil, err
-	}
 
-	device, err := getDeviceByAttachmentId(req.VolumeId, n.nodeId, conn)
+	// get the VMI volumes which are under VMI.spec.volumes
+	// The volume ID to prepare should
+
+	device, err := getDeviceBySerialID(req.VolumeId)
 	if err != nil {
 		klog.Errorf("Failed to fetch device by attachment-id for volume %s on node %s", req.VolumeId, n.nodeId)
 		return nil, err
 	}
 
 	// is there a filesystem on this device?
-	filesystem, err := getDeviceInfo(device)
-	if err != nil {
-		klog.Errorf("Failed to fetch device info for volume %s on node %s", req.VolumeId, n.nodeId)
-		return nil, err
-	}
-	if filesystem != "" {
-		klog.Infof("Detected fs %s, returning", filesystem)
+	//filesystem, err := getDeviceInfo(device)
+	if device.Fstype != "" {
+		klog.Infof("Detected fs %s, returning", device.Fstype)
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	fsType := req.VolumeCapability.GetMount().FsType
 	// no filesystem - create it
 	klog.Infof("Creating FS %s on device %s", fsType, device)
-	err = makeFS(device, fsType)
+	err = makeFS(device.Path, fsType)
 	if err != nil {
 		klog.Errorf("Could not create filesystem %s on %s", fsType, device)
 		return nil, err
@@ -79,13 +68,9 @@ func (n *NodeService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 }
 
 func (n *NodeService) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	conn, err := n.ovirtClient.GetConnection()
-	if err != nil {
-		klog.Errorf("Failed to get ovirt client connection")
-		return nil, err
-	}
-
-	device, err := getDeviceByAttachmentId(req.VolumeId, n.nodeId, conn)
+	// volumeID is kubevirt's serialID
+	// TODO link to kubevirt code
+	device, err := getDeviceBySerialID(req.VolumeId)
 	if err != nil {
 		klog.Errorf("Failed to fetch device by attachment-id for volume %s on node %s", req.VolumeId, n.nodeId)
 		return nil, err
@@ -94,14 +79,14 @@ func (n *NodeService) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	targetPath := req.GetTargetPath()
 	err = os.MkdirAll(targetPath, 0750)
 	if err != nil {
-		return nil, errors.New(err.Error())
+		return nil, err
 	}
 
 	fsType := req.VolumeCapability.GetMount().FsType
 	klog.Infof("Mounting devicePath %s, on targetPath: %s with FS type: %s",
 		device, targetPath, fsType)
 	mounter := mount.New("")
-	err = mounter.Mount(device, targetPath, fsType, []string{})
+	err = mounter.Mount(device.Path, targetPath, fsType, []string{})
 	if err != nil {
 		klog.Errorf("Failed mounting %v", err)
 		return nil, err
@@ -151,44 +136,43 @@ func (n *NodeService) NodeGetCapabilities(context.Context, *csi.NodeGetCapabilit
 	return &csi.NodeGetCapabilitiesResponse{Capabilities: caps}, nil
 }
 
-func getDeviceByAttachmentId(volumeID, nodeID string, conn *ovirtsdk.Connection) (string, error) {
-	attachment, err := diskAttachmentByVmAndDisk(conn, nodeID, volumeID)
+type Devices struct {
+	BlockDevices []Device `blockdevices`
+}
+type Device struct {
+	SerialID string `serial`
+	Path     string `path`
+	Fstype   string `fstype`
+}
+
+func getDeviceBySerialID(serialID string) (Device, error) {
+	klog.Infof("Get the device details by serialID %s", serialID)
+
+	// run lsblk to get all serial -> path mapping
+	// must be lsblk recent enough for json format
+
+	klog.Info("lsblk -nJo SERIAL,PATH,FSTYPE")
+	cmd := exec.Command("lsblk", "-nro", "SERIAL,PATH,FSTYPE")
+	out, err := cmd.Output()
+	exitError, incompleteCmd := err.(*exec.ExitError)
+	if err != nil && incompleteCmd {
+		return Device{}, errors.New(err.Error() + "lsblk failed with " + string(exitError.Stderr))
+	}
+
+	devices := Devices{}
+	json.Unmarshal(out, &devices)
+
 	if err != nil {
-		return "", err
+		klog.Errorf("Error occured while trying to read lsblk output")
+		return Device{}, err
 	}
 
-	klog.Infof("Extracting pvc volume name %s", volumeID)
-	disk, _ := conn.FollowLink(attachment.MustDisk())
-	d, ok := disk.(*ovirtsdk.Disk)
-	if !ok {
-		return "", errors.New("couldn't retrieve disk from attachment")
-	}
-	klog.Infof("Extracted disk ID from PVC %s", d.MustId())
-
-	baseDevicePath, err := baseDevicePathByInterface(attachment.MustInterface())
-	if err != nil {
-		return "", err
-	}
-
-	// verify the device path exists
-	device := baseDevicePath + d.MustId()
-	_, err = os.Stat(device)
-	if err == nil {
-		klog.Infof("Device path %s exists", device)
-		return device, nil
-	}
-
-	if os.IsNotExist(err) {
-		// try with short disk ID, where the serial ID is only 20 chars long (controlled by udev)
-		shortDevice := baseDevicePath + d.MustId()[:20]
-		_, err = os.Stat(shortDevice)
-		if err == nil {
-			klog.Infof("Device path %s exists", shortDevice)
-			return shortDevice, nil
+	for _, d := range devices.BlockDevices {
+		if d.SerialID == serialID {
+			return d, nil
 		}
 	}
-	klog.Errorf("Device path for disk ID %s does not exists", d.MustId())
-	return "", errors.New("device was not found")
+	return Device{}, errors.New("couldn't get device by serial id")
 }
 
 // getDeviceInfo will return the first Device which is a partition and its filesystem.
@@ -254,4 +238,23 @@ func isMountpoint(mountDir string) bool {
 		return false
 	}
 	return true
+}
+
+func baseDevicePathByInterface(diskInterface string) (string, error) {
+
+	//TODO replace this non-sense with lsblk  -o SERIAL,PATH -J which creates
+	// json representaion of block devices serial and path
+	// {
+	// "blockdevices": [
+	//    {"serial":"S35ENX0J663758", "path":"/dev/nvme0n1"},
+	// ]
+
+	switch diskInterface {
+	case "virtio":
+		return "/dev/disk/by-id/virtio-", nil
+	case "scsi":
+		return "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_", nil
+	}
+	return "", errors.New("device type is unsupported")
+
 }

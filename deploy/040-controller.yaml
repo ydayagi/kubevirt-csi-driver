@@ -20,27 +20,27 @@ spec:
       initContainers:
         - name: prepare-kubevirt-config
           env:
-            - name: OVIRT_URL
+            - name: kubevirt_URL
               valueFrom:
                 secretKeyRef:
                   name: kubevirt-credentials
                   key: kubevirt_url
-            - name: OVIRT_USERNAME
+            - name: kubevirt_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: kubevirt-credentials
                   key: kubevirt_username
-            - name: OVIRT_PASSWORD
+            - name: kubevirt_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: kubevirt-credentials
                   key: kubevirt_password
-            - name: OVIRT_CAFILE
+            - name: kubevirt_CAFILE
               valueFrom:
                 secretKeyRef:
                   name: kubevirt-credentials
                   key: kubevirt_cafile
-            - name: OVIRT_INSECURE
+            - name: kubevirt_INSECURE
               valueFrom:
                 secretKeyRef:
                   name: kubevirt-credentials
@@ -52,11 +52,11 @@ spec:
             - |
               #!/bin/sh
               cat << EOF > /tmp/config/kubevirt-config.yaml
-              kubevirt_url: $OVIRT_URL
-              kubevirt_username: $OVIRT_USERNAME
-              kubevirt_password: $OVIRT_PASSWORD
-              kubevirt_cafile: $OVIRT_CAFILE
-              kubevirt_insecure: $OVIRT_INSECURE
+              kubevirt_url: $kubevirt_URL
+              kubevirt_username: $kubevirt_USERNAME
+              kubevirt_password: $kubevirt_PASSWORD
+              kubevirt_cafile: $kubevirt_CAFILE
+              kubevirt_insecure: $kubevirt_INSECURE
               EOF
           volumeMounts:
             - name: config
@@ -106,7 +106,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: OVIRT_CONFIG
+            - name: kubevirt_CONFIG
               value: /tmp/config/kubevirt-config.yaml
           volumeMounts:
             - name: socket-dir

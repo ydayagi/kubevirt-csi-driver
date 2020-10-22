@@ -28,6 +28,7 @@ vet:
 	hack/verify-govet.sh
 
 .PHONY: image
+image:
 	podman build . -f Dockerfile -t ${IMG}
 
 .PHONY: vendor

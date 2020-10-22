@@ -1,4 +1,4 @@
-FROM registry.svc.ci.openshift.org/openshift/release:golang-1.13 AS builder
+FROM registry.svc.ci.openshift.org/openshift/release:golang-1.15 AS builder
 
 WORKDIR /src/kubevirt-csi-driver
 COPY . .
@@ -9,4 +9,4 @@ FROM fedora:32
 RUN dnf install -y e2fsprogs xfsprogs
 COPY --from=builder /src/kubevirt-csi-driver/bin/kubevirt-csi-driver .
 
-ENTRYPOINT ["./ovirt-kubevirt-driver"]
+ENTRYPOINT ["./kubevirt-csi-driver"]

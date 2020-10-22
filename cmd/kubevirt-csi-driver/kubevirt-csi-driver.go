@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"math/rand"
 	"os"
@@ -10,16 +11,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/kubevirt/csi-driver/internal/kubevirt"
 	"github.com/kubevirt/csi-driver/pkg/service"
 )
 
 var (
 	endpoint               = flag.String("endpoint", "unix:/csi/csi.sock", "CSI endpoint")
 	namespace              = flag.String("namespace", "", "Namespace to run the controllers on")
-	underClusterKubeconfig = flag.String("under-cluster-kubeconfig", "", "Path to the under cluster kubeconfig")
+	infraClusterKubeconfig = flag.String("infra-cluster-kubeconfig", "", "Path to the infra cluster kubeconfig")
 	nodeName               = flag.String("node-name", "", "The node name - the node this pods runs on")
 )
 
@@ -41,46 +41,30 @@ func handle() {
 	}
 	klog.V(2).Infof("Driver vendor %v %v", service.VendorName, service.VendorVersion)
 
-	// TODO get under cluster client
-	c, _ := clientcmd.BuildConfigFromFlags("", *underClusterKubeconfig)
-	underClusterClientSet, err := kubernetes.NewForConfig(c)
+	//get infra cluster client
+	c, _ := clientcmd.BuildConfigFromFlags("", *infraClusterKubeconfig)
+	infraClusterClientSet, err := kubernetes.NewForConfig(c)
 	if err != nil {
-		klog.Fatalf("Failed to initialize ovirt client %s", err)
+		klog.Fatalf("Failed to initialize kubevirt client %s", err)
 	}
 
-	// Get a config to talk to the apiserver
-	restConfig, err := config.GetConfig()
-	if err != nil {
-		klog.Fatal(err)
-	}
-
-	opts := manager.Options{
-		Namespace: *namespace,
-	}
-
-	// Create a new Cmd to provide shared dependencies and start components
-	mgr, err := manager.New(restConfig, opts)
-	if err != nil {
-		klog.Fatal(err)
-	}
 
 	// get the node object by name and pass the VM ID because it is the node
 	// id from the storage perspective. It will be used for attaching disks
 	var nodeId string
-	clientSet, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		klog.Fatal(err)
-	}
-
 	if *nodeName != "" {
-		get, err := clientSet.CoreV1().Nodes().Get(*nodeName, metav1.GetOptions{})
+		get, err := infraClusterClientSet.CoreV1().Nodes().Get(context.Background(), *nodeName, metav1.GetOptions{})
 		if err != nil {
 			klog.Fatal(err)
 		}
 		nodeId = get.Status.NodeInfo.SystemUUID
 	}
 
-	driver := service.NewOvirtCSIDriver(underClusterClientSet, mgr.GetClient(), nodeId)
+	client, err := kubevirt.NewClient(c)
+	if err != nil {
+		klog.Fatal(err)
+	}
+	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, client, nodeId)
 
 	driver.Run(*endpoint)
 }
