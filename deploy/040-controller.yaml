@@ -78,7 +78,7 @@ spec:
           args:
             - "--v=9"
             - "--csi-address=/csi/csi.sock"
-            - "--provisioner=csi.kubevirt.org"
+            - "--provisioner=csi.kubevirt.io"
           volumeMounts:
             - name: socket-dir
               mountPath: /csi

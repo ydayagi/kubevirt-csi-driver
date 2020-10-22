@@ -19,8 +19,8 @@ import (
 var (
 	endpoint               = flag.String("endpoint", "unix:/csi/csi.sock", "CSI endpoint")
 	namespace              = flag.String("namespace", "", "Namespace to run the controllers on")
-	infraClusterKubeconfig = flag.String("infra-cluster-kubeconfig", "", "Path to the infra cluster kubeconfig")
 	nodeName               = flag.String("node-name", "", "The node name - the node this pods runs on")
+	infraClusterKubeconfig = flag.String("infra-cluster-kubeconfig", "", "Path to the infra cluster kubeconfig")
 )
 
 func init() {

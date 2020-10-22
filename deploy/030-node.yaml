@@ -23,43 +23,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: kubevirt-credentials
-                  key: kubevirt_url
-            - name: kubevirt_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_username
-            - name: kubevirt_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_password
-            - name: kubevirt_CAFILE
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_cafile
-            - name: kubevirt_INSECURE
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_insecure
-          image: busybox
-          command:
-            - /bin/sh
-            - -c
-            - |
-              #!/bin/sh
-              cat << EOF > /tmp/config/kubevirt-config.yaml
-              kubevirt_url: $kubevirt_URL
-              kubevirt_username: $kubevirt_USERNAME
-              kubevirt_password: $kubevirt_PASSWORD
-              kubevirt_cafile: $kubevirt_CAFILE
-              kubevirt_insecure: $kubevirt_INSECURE
-              EOF
-          volumeMounts:
-            - name: config
-              mountPath: /tmp/config
+                  key: kubevirt_kubeconfig
 
       containers:
         - name: csi-driver-registrar
@@ -68,7 +32,7 @@ spec:
           args:
             - "--v=5"
             - "--csi-address=/csi/csi.sock"
-            - "--kubelet-registration-path=/var/lib/kubelet/plugins/kubevirt.org/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/kubevirt.io/csi.sock"
           env:
             - name: KUBE_NODE_NAME
               valueFrom:
@@ -89,6 +53,7 @@ spec:
             - "--endpoint=unix:/csi/csi.sock"
             - "--namespace=kubevirt-csi-driver"
             - "--node-name=$(KUBE_NODE_NAME)"
+            - "--infra-cluster-kubeconfig=/var/run/secrets/infracluster/kubeconfig"
           env:
             - name: KUBE_NODE_NAME
               valueFrom:
@@ -97,9 +62,8 @@ spec:
             - name: kubevirt_CONFIG
               value: /tmp/config/kubevirt-config.yaml
           volumeMounts:
-#            - name: kubelet-dir
-#              mountPath: /var/lib/kubelet
-#              mountPropagation: "Bidirectional"
+            - name: kubevirt_credentials
+              mountPath: /var/run/secrets/infracluster
             - name: socket-dir
               mountPath: /csi
             - name: config
@@ -115,6 +79,9 @@ spec:
               mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
       volumes:
+        - name: kubevirt_credentials
+          secret:
+            secretName: kubevirt-credentials
         - name: registration-dir
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
@@ -129,7 +96,7 @@ spec:
             type: Directory
         - name: socket-dir
           hostPath:
-            path: /var/lib/kubelet/plugins/kubevirt.org/
+            path: /var/lib/kubelet/plugins/kubevirt.io/
             type: DirectoryOrCreate
         - name: host-dev
           hostPath:

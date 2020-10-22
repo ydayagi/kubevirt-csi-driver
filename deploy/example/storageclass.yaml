@@ -4,7 +4,7 @@ metadata:
   name: kubevirt-csi-sc
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
-provisioner: csi.kubevirt.org
+provisioner: csi.kubevirt.io
 parameters:
   # the name of the kubevirt storage domain. "nfs" is just an example.
   storageDomainName: "nfs"
