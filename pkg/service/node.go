@@ -137,22 +137,19 @@ func (n *NodeService) NodeGetCapabilities(context.Context, *csi.NodeGetCapabilit
 }
 
 type Devices struct {
-	BlockDevices []Device `blockdevices`
+	BlockDevices []Device `json:"blockdevices"`
 }
 type Device struct {
-	SerialID string `serial`
-	Path     string `path`
-	Fstype   string `fstype`
+	SerialID string `json:"serial"`
+	Path     string `json:"path"`
+	Fstype   string `json:"fstype"`
 }
 
 func getDeviceBySerialID(serialID string) (Device, error) {
 	klog.Infof("Get the device details by serialID %s", serialID)
-
-	// run lsblk to get all serial -> path mapping
+	klog.V(5).Info("lsblk -nJo SERIAL,PATH,FSTYPE")
 	// must be lsblk recent enough for json format
-
-	klog.Info("lsblk -nJo SERIAL,PATH,FSTYPE")
-	cmd := exec.Command("lsblk", "-nro", "SERIAL,PATH,FSTYPE")
+	cmd := exec.Command("lsblk", "-nJo", "SERIAL,PATH,FSTYPE")
 	out, err := cmd.Output()
 	exitError, incompleteCmd := err.(*exec.ExitError)
 	if err != nil && incompleteCmd {
@@ -160,10 +157,9 @@ func getDeviceBySerialID(serialID string) (Device, error) {
 	}
 
 	devices := Devices{}
-	json.Unmarshal(out, &devices)
-
+	err = json.Unmarshal(out, &devices)
 	if err != nil {
-		klog.Errorf("Error occured while trying to read lsblk output")
+		klog.Errorf("Failed to parse json output from lsblk: %s", err)
 		return Device{}, err
 	}
 
@@ -172,7 +168,7 @@ func getDeviceBySerialID(serialID string) (Device, error) {
 			return d, nil
 		}
 	}
-	return Device{}, errors.New("couldn't get device by serial id")
+	return Device{}, errors.New("couldn't find device by serial id")
 }
 
 // getDeviceInfo will return the first Device which is a partition and its filesystem.
