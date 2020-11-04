@@ -16,53 +16,7 @@ spec:
       labels:
         app: kubevirt-csi-driver
     spec:
-      serviceAccount: kubevirt-csi-controller-sa
-      initContainers:
-        # prepare the kubeconfig of the infra cluster and place it under /var/run/infracluster/kubeconfig
-        - name: prepare-kubevirt-config
-          env:
-            - name: kubevirt_URL
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_url
-            - name: kubevirt_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_username
-            - name: kubevirt_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_password
-            - name: kubevirt_CAFILE
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_cafile
-            - name: kubevirt_INSECURE
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_insecure
-          image: busybox
-          command:
-            - /bin/sh
-            - -c
-            - |
-              #!/bin/sh
-              cat << EOF > /tmp/config/kubevirt-config.yaml
-              kubevirt_url: $kubevirt_URL
-              kubevirt_username: $kubevirt_USERNAME
-              kubevirt_password: $kubevirt_PASSWORD
-              kubevirt_cafile: $kubevirt_CAFILE
-              kubevirt_insecure: $kubevirt_INSECURE
-              EOF
-          volumeMounts:
-            - name: config
-              mountPath: /tmp/config
-
+#      serviceAccount: kubevirt-csi-controller-sa
       containers:
         - name: csi-external-attacher
           imagePullPolicy: Always
@@ -89,7 +43,10 @@ spec:
           args:
             - "--endpoint=unix:/csi/csi.sock"
             - "--namespace=kubevirt-csi-driver"
-            - "--infraClusterKubeconfig=/var/run/secrets/"
+            - "--infra-cluster-namespace=$(INFRACLUSTER_NAMESPACE)"
+            - "--infra-cluster-api-url=$(INFRACLUSTER_API_URL)"
+            - "--infra-cluster-token=/var/run/secrets/infracluster/token"
+            - "--infra-cluster-ca=/var/run/secrets/infracluster/ca.crt"
           ports:
           - containerPort: 9808
             name: healthz
@@ -107,13 +64,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: kubevirt_CONFIG
-              value: /tmp/config/kubevirt-config.yaml
+            - name: INFRACLUSTER_NAMESPACE
+              valueFrom:
+                secretKeyRef:
+                  name: infra-cluster-sa-secret
+                  key: namespace
+            - name: INFRACLUSTER_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: infra-cluster-sa-secret
+                  key: apiUrl
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-            - name: config
-              mountPath: /tmp/config/
+            - name: infracluster
+              mountPath: "/var/run/secrets/infracluster"
         - name: liveness-probe
           imagePullPolicy: Always
           image: quay.io/k8scsi/livenessprobe:v2.0.0
@@ -128,5 +93,6 @@ spec:
       volumes:
         - name: socket-dir
           emptyDir: {}
-        - name: config
-          emptyDir: {}
+        - name: infracluster
+            secret:
+              secretName: infra-cluster-sa-secret

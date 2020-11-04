@@ -15,16 +15,7 @@ spec:
       labels:
         app: kubevirt-csi-driver
     spec:
-      serviceAccount: kubevirt-csi-node-sa
-      initContainers:
-        - name: prepare-kubevirt-config
-          env:
-            - name: kubevirt_URL
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_kubeconfig
-
+#      serviceAccount: kubevirt-csi-node-sa
       containers:
         - name: csi-driver-registrar
           imagePullPolicy: Always
@@ -53,21 +44,30 @@ spec:
             - "--endpoint=unix:/csi/csi.sock"
             - "--namespace=kubevirt-csi-driver"
             - "--node-name=$(KUBE_NODE_NAME)"
-            - "--infra-cluster-kubeconfig=/var/run/secrets/infracluster/kubeconfig"
+            - "--infra-cluster-namespace=$(INFRACLUSTER_NAMESPACE)"
+            - "--infra-cluster-api-url=$(INFRACLUSTER_API_URL)"
+            - "--infra-cluster-token=/var/run/secrets/infracluster/token"
+            - "--infra-cluster-ca=/var/run/secrets/infracluster/ca.crt"
           env:
             - name: KUBE_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: kubevirt_CONFIG
-              value: /tmp/config/kubevirt-config.yaml
+            - name: INFRACLUSTER_NAMESPACE
+              valueFrom:
+                secretKeyRef:
+                  name: infra-cluster-sa-secret
+                  key: namespace
+            - name: INFRACLUSTER_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: infra-cluster-sa-secret
+                  key: apiUrl
           volumeMounts:
-            - name: kubevirt_credentials
-              mountPath: /var/run/secrets/infracluster
+            - name: infracluster
+              mountPath: "/var/run/secrets/infracluster"
             - name: socket-dir
               mountPath: /csi
-            - name: config
-              mountPath: /tmp/config/
             - name: plugin-dir
               mountPath: /var/lib/kubelet/plugins
               mountPropagation: Bidirectional
@@ -79,9 +79,9 @@ spec:
               mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
       volumes:
-        - name: kubevirt_credentials
-          secret:
-            secretName: kubevirt-credentials
+        - name: infracluster
+            secret:
+              secretName: infra-cluster-sa-secret
         - name: registration-dir
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
@@ -104,8 +104,6 @@ spec:
         - name: udev
           hostPath:
             path: /run/udev
-        - name: config
-          emptyDir: {}
         - name: mountpoint-dir
           hostPath:
             path: /var/lib/kubelet/pods
