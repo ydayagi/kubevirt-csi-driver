@@ -7,12 +7,15 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/client-go/dynamic"
+
+	"kubevirt.io/client-go/kubecli"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 
-	"github.com/kubevirt/csi-driver/internal/kubevirt"
 	"github.com/kubevirt/csi-driver/pkg/service"
 )
 
@@ -48,7 +51,6 @@ func handle() {
 		klog.Fatalf("Failed to initialize kubevirt client %s", err)
 	}
 
-
 	// get the node object by name and pass the VM ID because it is the node
 	// id from the storage perspective. It will be used for attaching disks
 	var nodeId string
@@ -60,11 +62,21 @@ func handle() {
 		nodeId = get.Status.NodeInfo.SystemUUID
 	}
 
-	client, err := kubevirt.NewClient(c)
+	kubevirtClient, err := kubecli.GetKubevirtClientConfigntFromClientConfig(c)
 	if err != nil {
 		klog.Fatal(err)
 	}
-	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, client, nodeId)
+
+	tenantConfig, err := clientcmd.BuildConfigFromFlags("", "")
+	if err != nil {
+		klog.Fatal(err)
+	}
+	tenantClusterClient, err := dynamic.NewForConfig(tenantConfig)
+	if err != nil {
+		klog.Fatal(err)
+	}
+
+	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, kubevirtClient, tenantClusterClient, nodeId)
 
 	driver.Run(*endpoint)
 }
