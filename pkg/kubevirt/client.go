@@ -106,7 +106,6 @@ func (c *client) ListVirtualMachineInstancesNames(namespace string, requiredLabe
 		names = append(names, vmi.Name)
 	}
 	return names, nil
-
 }
 
 func (c *client) DeleteDataVolume(namespace string, name string) error {

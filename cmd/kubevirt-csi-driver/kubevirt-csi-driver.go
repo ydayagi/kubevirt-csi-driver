@@ -42,30 +42,26 @@ func handle() {
 	}
 	klog.V(2).Infof("Driver vendor %v %v", service.VendorName, service.VendorVersion)
 
-	//get infra cluster client
 	c, _ := clientcmd.BuildConfigFromFlags("", *infraClusterKubeconfig)
 	infraClusterClientSet, err := kubernetes.NewForConfig(c)
 	if err != nil {
-		klog.Fatalf("Failed to initialize kubevirt client %s", err)
+		klog.Fatalf("Failed to initialize KubeVirt client %s", err)
+	}
+
+	virtClient, err := kubevirt.NewClient(c)
+	if err != nil {
+		klog.Fatal(err)
 	}
 
 	// TODO revise the assumption that the  current running node name should be the infracluster VM name.
 	if *nodeName != "" {
-		newClient, err := kubevirt.NewClient(c)
-		if err != nil {
-			klog.Fatal(fmt.Errorf("failed to create kubevirt client %v", err))
-		}
-		_, err = newClient.GetVMI(context.Background(), *infraClusterNamespace, *nodeName)
+		_, err = virtClient.GetVMI(context.Background(), *infraClusterNamespace, *nodeName)
 		if err != nil {
 			klog.Fatal(fmt.Errorf("failed to find a VM in the infra cluster with that name %v: %v", nodeName, err))
 		}
 	}
 
-	client, err := kubevirt.NewClient(c)
-	if err != nil {
-		klog.Fatal(err)
-	}
-	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, client, *nodeName)
+	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, virtClient, *nodeName)
 
 	driver.Run(*endpoint)
 }
