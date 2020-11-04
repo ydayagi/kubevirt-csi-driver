@@ -65,6 +65,7 @@ func (n *NodeService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
+//NodePublishVolume mounts the volume to the target path (req.GetTargetPath)
 func (n *NodeService) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// volumeID = serialID = kubevirt's DataVolume.metadata.uid
 	// TODO link to kubevirt code
@@ -76,10 +77,13 @@ func (n *NodeService) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	targetPath := req.GetTargetPath()
 	err = os.MkdirAll(targetPath, 0750)
+	// MkdirAll returns nil if path already exists
 	if err != nil {
 		return nil, err
 	}
 
+	//TODO support mount options
+	req.GetStagingTargetPath()
 	fsType := req.VolumeCapability.GetMount().FsType
 	klog.Infof("Mounting devicePath %s, on targetPath: %s with FS type: %s",
 		device, targetPath, fsType)
@@ -93,6 +97,7 @@ func (n *NodeService) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
+//NodeUnpublishVolume unmount the volume from the worker node
 func (n *NodeService) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	mounter := mount.New("")
 	klog.Infof("Unmounting %s", req.GetTargetPath())
@@ -146,6 +151,7 @@ type Device struct {
 func getDeviceBySerialID(serialID string) (Device, error) {
 	klog.Infof("Get the device details by serialID %s", serialID)
 	klog.V(5).Info("lsblk -nJo SERIAL,PATH,FSTYPE")
+
 	// must be lsblk recent enough for json format
 	cmd := exec.Command("lsblk", "-nJo", "SERIAL,PATH,FSTYPE")
 	out, err := cmd.Output()
