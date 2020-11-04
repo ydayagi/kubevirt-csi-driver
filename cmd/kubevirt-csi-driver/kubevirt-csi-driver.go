@@ -3,16 +3,16 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"math/rand"
 	"os"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 
-	"github.com/kubevirt/csi-driver/internal/kubevirt"
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 	"github.com/kubevirt/csi-driver/pkg/service"
 )
 
@@ -21,6 +21,7 @@ var (
 	namespace              = flag.String("namespace", "", "Namespace to run the controllers on")
 	nodeName               = flag.String("node-name", "", "The node name - the node this pods runs on")
 	infraClusterKubeconfig = flag.String("infra-cluster-kubeconfig", "", "Path to the infra cluster kubeconfig")
+	infraClusterNamespace = flag.String("infra-cluster-namespace", "", "The namespace to operator on the infracluster")
 )
 
 func init() {
@@ -48,23 +49,23 @@ func handle() {
 		klog.Fatalf("Failed to initialize kubevirt client %s", err)
 	}
 
-
-	// get the node object by name and pass the VM ID because it is the node
-	// id from the storage perspective. It will be used for attaching disks
-	var nodeId string
+	// TODO revise the assumption that the  current running node name should be the infracluster VM name.
 	if *nodeName != "" {
-		get, err := infraClusterClientSet.CoreV1().Nodes().Get(context.Background(), *nodeName, metav1.GetOptions{})
+		newClient, err := kubevirt.NewClient(c)
 		if err != nil {
-			klog.Fatal(err)
+			klog.Fatal(fmt.Errorf("failed to create kubevirt client %v", err))
 		}
-		nodeId = get.Status.NodeInfo.SystemUUID
+		_, err = newClient.GetVMI(context.Background(), *infraClusterNamespace, *nodeName)
+		if err != nil {
+			klog.Fatal(fmt.Errorf("failed to find a VM in the infra cluster with that name %v: %v", nodeName, err))
+		}
 	}
 
 	client, err := kubevirt.NewClient(c)
 	if err != nil {
 		klog.Fatal(err)
 	}
-	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, client, nodeId)
+	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, client, *nodeName)
 
 	driver.Run(*endpoint)
 }

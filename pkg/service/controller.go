@@ -6,7 +6,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/kubevirt/csi-driver/internal/kubevirt"
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
@@ -21,7 +21,7 @@ const (
 //ControllerService implements the controller interface
 type ControllerService struct {
 	infraClusterClient kubernetes.Clientset
-	kubevirtClient 	kubevirt.Client
+	kubevirtClient     kubevirt.Client
 }
 
 var ControllerCaps = []csi.ControllerServiceCapability_RPC_Type{
@@ -59,7 +59,7 @@ func (c *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	// err := c.kubevirtClient.ListDataVolumeNames()
 
 	// 2. delete the volume
-	err := c.kubevirtClient.DeleteDataVolume("fill this","fill this", true)
+	err := c.kubevirtClient.DeleteDataVolume("fill this", "dvname")
 	return &csi.DeleteVolumeResponse{}, err
 }
 

@@ -18,6 +18,7 @@ spec:
     spec:
       serviceAccount: kubevirt-csi-controller-sa
       initContainers:
+        # prepare the kubeconfig of the infra cluster and place it under /var/run/infracluster/kubeconfig
         - name: prepare-kubevirt-config
           env:
             - name: kubevirt_URL
@@ -88,7 +89,7 @@ spec:
           args:
             - "--endpoint=unix:/csi/csi.sock"
             - "--namespace=kubevirt-csi-driver"
-            - "--kubevirt-conf="
+            - "--infraClusterKubeconfig=/var/run/secrets/"
           ports:
           - containerPort: 9808
             name: healthz

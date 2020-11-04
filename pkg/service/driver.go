@@ -1,10 +1,10 @@
 package service
 
 import (
-	"github.com/kubevirt/csi-driver/internal/kubevirt"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 )
 
 var (
@@ -18,8 +18,8 @@ type kubevirtCSIDriver struct {
 	*ControllerService
 	*NodeService
 	nodeId             string
-	infraClusterClient client.Client
-	Client             client.Client
+	infraClusterClient kubernetes.Clientset
+	Client             kubevirt.Client
 }
 
 // NewkubevirtCSIDriver creates a driver instance

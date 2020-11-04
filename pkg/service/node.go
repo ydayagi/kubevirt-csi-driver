@@ -13,7 +13,7 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
-	"github.com/kubevirt/csi-driver/internal/kubevirt"
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 	//kubevirtv1 "kubevirt.io/client-go/api/v1"
 	"golang.org/x/net/context"
 	"k8s.io/klog"

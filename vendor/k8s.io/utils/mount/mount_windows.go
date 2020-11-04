@@ -26,11 +26,8 @@ import (
 	"strings"
 
 	"k8s.io/klog/v2"
+	utilexec "k8s.io/utils/exec"
 	"k8s.io/utils/keymutex"
-)
-
-const (
-	accessDenied string = "access is denied"
 )
 
 // Mounter provides the default implementation of mount.Interface
@@ -88,8 +85,9 @@ func (mounter *Mounter) MountSensitive(source string, target string, fstype stri
 		allOptions = append(allOptions, options...)
 		allOptions = append(allOptions, sensitiveOptions...)
 		if len(allOptions) < 2 {
-			return fmt.Errorf("mount options(%q) should have at least 2 options, current number:%d, source:%q, target:%q",
+			klog.Warningf("mount options(%q) command number(%d) less than 2, source:%q, target:%q, skip mounting",
 				sanitizedOptionsForLogging, len(allOptions), source, target)
+			return nil
 		}
 
 		// currently only cifs mount is supported
@@ -101,27 +99,17 @@ func (mounter *Mounter) MountSensitive(source string, target string, fstype stri
 		getSMBMountMutex.LockKey(source)
 		defer getSMBMountMutex.UnlockKey(source)
 
-		username := allOptions[0]
-		password := allOptions[1]
-		if output, err := newSMBMapping(username, password, source); err != nil {
-			klog.Warningf("SMB Mapping(%s) returned with error(%v), output(%s)", source, err, string(output))
+		if output, err := newSMBMapping(allOptions[0], allOptions[1], source); err != nil {
 			if isSMBMappingExist(source) {
-				valid, err := isValidPath(source)
-				if !valid {
-					if err == nil || isAccessDeniedError(err) {
-						klog.V(2).Infof("SMB Mapping(%s) already exists while it's not valid, return error: %v, now begin to remove and remount", source, err)
-						if output, err = removeSMBMapping(source); err != nil {
-							return fmt.Errorf("Remove-SmbGlobalMapping failed: %v, output: %q", err, output)
-						}
-						if output, err := newSMBMapping(username, password, source); err != nil {
-							return fmt.Errorf("New-SmbGlobalMapping(%s) failed: %v, output: %q", source, err, output)
-						}
-					}
-				} else {
-					klog.V(2).Infof("SMB Mapping(%s) already exists and is still valid, skip error(%v)", source, err)
+				klog.V(2).Infof("SMB Mapping(%s) already exists, now begin to remove and remount", source)
+				if output, err := removeSMBMapping(source); err != nil {
+					return fmt.Errorf("Remove-SmbGlobalMapping failed: %v, output: %q", err, output)
+				}
+				if output, err := newSMBMapping(allOptions[0], allOptions[1], source); err != nil {
+					return fmt.Errorf("New-SmbGlobalMapping remount failed: %v, output: %q", err, output)
 				}
 			} else {
-				return fmt.Errorf("New-SmbGlobalMapping(%s) failed: %v, output: %q", source, err, output)
+				return fmt.Errorf("New-SmbGlobalMapping failed: %v, output: %q", err, output)
 			}
 		}
 	}
@@ -164,23 +152,6 @@ func isSMBMappingExist(remotepath string) bool {
 	cmd.Env = append(os.Environ(), fmt.Sprintf("smbremotepath=%s", remotepath))
 	_, err := cmd.CombinedOutput()
 	return err == nil
-}
-
-// check whether remotepath is valid
-// return (true, nil) if remotepath is valid
-func isValidPath(remotepath string) (bool, error) {
-	cmd := exec.Command("powershell", "/c", `Test-Path $Env:remoteapth`)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("remoteapth=%s", remotepath))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false, fmt.Errorf("returned output: %s, error: %v", string(output), err)
-	}
-
-	return strings.HasPrefix(strings.ToLower(string(output)), "true"), nil
-}
-
-func isAccessDeniedError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), accessDenied)
 }
 
 // remove SMB mapping
@@ -251,17 +222,17 @@ func (mounter *SafeFormatAndMount) formatAndMountSensitive(source string, target
 
 	// format disk if it is unformatted(raw)
 	cmd := fmt.Sprintf("Get-Disk -Number %s | Where partitionstyle -eq 'raw' | Initialize-Disk -PartitionStyle MBR -PassThru"+
-		" | New-Partition -UseMaximumSize | Format-Volume -FileSystem %s -Confirm:$false", source, fstype)
+		" | New-Partition -AssignDriveLetter -UseMaximumSize | Format-Volume -FileSystem %s -Confirm:$false", source, fstype)
 	if output, err := mounter.Exec.Command("powershell", "/c", cmd).CombinedOutput(); err != nil {
 		return fmt.Errorf("diskMount: format disk failed, error: %v, output: %q", err, string(output))
 	}
 	klog.V(4).Infof("diskMount: Disk successfully formatted, disk: %q, fstype: %q", source, fstype)
 
-	volumeIds, err := listVolumesOnDisk(source)
+	driveLetter, err := getDriveLetterByDiskNumber(source, mounter.Exec)
 	if err != nil {
 		return err
 	}
-	driverPath := volumeIds[0]
+	driverPath := driveLetter + ":"
 	target = NormalizeWindowsPath(target)
 	output, err := mounter.Exec.Command("cmd", "/c", "mklink", "/D", target, driverPath).CombinedOutput()
 	if err != nil {
@@ -272,17 +243,17 @@ func (mounter *SafeFormatAndMount) formatAndMountSensitive(source string, target
 	return nil
 }
 
-// ListVolumesOnDisk - returns back list of volumes(volumeIDs) in the disk (requested in diskID).
-func listVolumesOnDisk(diskID string) (volumeIDs []string, err error) {
-	cmd := fmt.Sprintf("(Get-Disk -DeviceId %s | Get-Partition | Get-Volume).UniqueId", diskID)
+// Get drive letter according to windows disk number
+func getDriveLetterByDiskNumber(diskNum string, exec utilexec.Interface) (string, error) {
+	cmd := fmt.Sprintf("(Get-Partition -DiskNumber %s).DriveLetter", diskNum)
 	output, err := exec.Command("powershell", "/c", cmd).CombinedOutput()
-	klog.V(4).Infof("listVolumesOnDisk id from %s: %s", diskID, string(output))
 	if err != nil {
-		return []string{}, fmt.Errorf("error list volumes on disk. cmd: %s, output: %s, error: %v", cmd, string(output), err)
+		return "", fmt.Errorf("azureMount: Get Drive Letter failed: %v, output: %q", err, string(output))
 	}
-
-	volumeIds := strings.Split(strings.TrimSpace(string(output)), "\r\n")
-	return volumeIds, nil
+	if len(string(output)) < 1 {
+		return "", fmt.Errorf("azureMount: Get Drive Letter failed, output is empty")
+	}
+	return string(output)[:1], nil
 }
 
 // getAllParentLinks walks all symbolic links and return all the parent targets recursively
