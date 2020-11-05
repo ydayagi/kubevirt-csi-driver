@@ -5,7 +5,7 @@ import (
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"golang.org/x/net/context"
 
-	"github.com/kubevirt/csi-driver/internal/kubevirt"
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 )
 
 //IdentityService of kubevirt-csi-driver

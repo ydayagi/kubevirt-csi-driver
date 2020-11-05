@@ -3,27 +3,34 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"time"
 
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 
 	"kubevirt.io/client-go/kubecli"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	certutil "k8s.io/client-go/util/cert"
+
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 	"github.com/kubevirt/csi-driver/pkg/service"
 )
 
 var (
-	endpoint               = flag.String("endpoint", "unix:/csi/csi.sock", "CSI endpoint")
-	namespace              = flag.String("namespace", "", "Namespace to run the controllers on")
-	infraClusterKubeconfig = flag.String("infra-cluster-kubeconfig", "", "Path to the infra cluster kubeconfig")
-	nodeName               = flag.String("node-name", "", "The node name - the node this pods runs on")
+	endpoint              = flag.String("endpoint", "unix:/csi/csi.sock", "CSI endpoint")
+	namespace             = flag.String("namespace", "", "Namespace to run the controllers on")
+	nodeName              = flag.String("node-name", "", "The node name - the node this pods runs on")
+	infraClusterNamespace = flag.String("infra-cluster-namespace", "", "The infra-cluster namespace")
+	infraClusterApiUrl    = flag.String("infra-cluster-api-url", "", "The infra-cluster API URL")
+	infraClusterToken     = flag.String("infra-cluster-token", "", "The infra-cluster token file")
+	infraClusterCA        = flag.String("infra-cluster-ca", "", "the infra-cluster ca certificate file")
 )
 
 func init() {
@@ -44,25 +51,30 @@ func handle() {
 	}
 	klog.V(2).Infof("Driver vendor %v %v", service.VendorName, service.VendorVersion)
 
-	//get infra cluster client
-	c, _ := clientcmd.BuildConfigFromFlags("", *infraClusterKubeconfig)
-	infraClusterClientSet, err := kubernetes.NewForConfig(c)
+	infraClusterConfig, err := buildInfraClusterConfig(*infraClusterApiUrl, *infraClusterToken, *infraClusterCA)
 	if err != nil {
-		klog.Fatalf("Failed to initialize kubevirt client %s", err)
+		klog.V(2).Infof("Failed to build infra cluster config %v", err)
 	}
 
-	// get the node object by name and pass the VM ID because it is the node
-	// id from the storage perspective. It will be used for attaching disks
-	var nodeId string
+	infraClusterClient, err := dynamic.NewForConfig(infraClusterConfig)
+	if err != nil {
+		klog.Fatalf("Failed to initialize KubeVirt client %s", err)
+	}
+
+	virtClient, err := kubevirt.NewClient(infraClusterConfig)
+	if err != nil {
+		klog.Fatal(err)
+	}
+
+	// TODO revise the assumption that the  current running node name should be the infracluster VM name.
 	if *nodeName != "" {
-		get, err := infraClusterClientSet.CoreV1().Nodes().Get(context.Background(), *nodeName, metav1.GetOptions{})
+		_, err = virtClient.GetVMI(context.Background(), *infraClusterNamespace, *nodeName)
 		if err != nil {
-			klog.Fatal(err)
+			klog.Fatal(fmt.Errorf("failed to find a VM in the infra cluster with that name %v: %v", nodeName, err))
 		}
-		nodeId = get.Status.NodeInfo.SystemUUID
 	}
 
-	kubevirtClient, err := kubecli.GetKubevirtClientConfigntFromClientConfig(c)
+	kubevirtClient, err := kubecli.GetKubevirtClientFromRESTConfig(infraClusterConfig)
 	if err != nil {
 		klog.Fatal(err)
 	}
@@ -76,7 +88,29 @@ func handle() {
 		klog.Fatal(err)
 	}
 
-	driver := service.NewkubevirtCSIDriver(*infraClusterClientSet, kubevirtClient, tenantClusterClient, nodeId)
+	driver := service.NewkubevirtCSIDriver(infraClusterClient, kubevirtClient, tenantClusterClient, *nodeName, *infraClusterNamespace)
 
 	driver.Run(*endpoint)
+}
+
+func buildInfraClusterConfig(url string, tokenFile string, caFile string) (*rest.Config, error) {
+	token, err := ioutil.ReadFile(tokenFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsClientConfig := rest.TLSClientConfig{}
+
+	if _, err := certutil.NewPool(caFile); err != nil {
+		klog.Errorf("Expected to load root CA config from %s, but got err: %v", caFile, err)
+	} else {
+		tlsClientConfig.CAFile = caFile
+	}
+
+	return &rest.Config{
+		Host:            url,
+		TLSClientConfig: tlsClientConfig,
+		BearerToken:     string(token),
+		BearerTokenFile: tokenFile,
+	}, nil
 }

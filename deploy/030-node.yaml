@@ -15,52 +15,7 @@ spec:
       labels:
         app: kubevirt-csi-driver
     spec:
-      serviceAccount: kubevirt-csi-node-sa
-      initContainers:
-        - name: prepare-kubevirt-config
-          env:
-            - name: kubevirt_URL
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_url
-            - name: kubevirt_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_username
-            - name: kubevirt_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_password
-            - name: kubevirt_CAFILE
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_cafile
-            - name: kubevirt_INSECURE
-              valueFrom:
-                secretKeyRef:
-                  name: kubevirt-credentials
-                  key: kubevirt_insecure
-          image: busybox
-          command:
-            - /bin/sh
-            - -c
-            - |
-              #!/bin/sh
-              cat << EOF > /tmp/config/kubevirt-config.yaml
-              kubevirt_url: $kubevirt_URL
-              kubevirt_username: $kubevirt_USERNAME
-              kubevirt_password: $kubevirt_PASSWORD
-              kubevirt_cafile: $kubevirt_CAFILE
-              kubevirt_insecure: $kubevirt_INSECURE
-              EOF
-          volumeMounts:
-            - name: config
-              mountPath: /tmp/config
-
+#      serviceAccount: kubevirt-csi-node-sa
       containers:
         - name: csi-driver-registrar
           imagePullPolicy: Always
@@ -68,7 +23,7 @@ spec:
           args:
             - "--v=5"
             - "--csi-address=/csi/csi.sock"
-            - "--kubelet-registration-path=/var/lib/kubelet/plugins/kubevirt.org/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/kubevirt.io/csi.sock"
           env:
             - name: KUBE_NODE_NAME
               valueFrom:
@@ -89,21 +44,30 @@ spec:
             - "--endpoint=unix:/csi/csi.sock"
             - "--namespace=kubevirt-csi-driver"
             - "--node-name=$(KUBE_NODE_NAME)"
+            - "--infra-cluster-namespace=$(INFRACLUSTER_NAMESPACE)"
+            - "--infra-cluster-api-url=$(INFRACLUSTER_API_URL)"
+            - "--infra-cluster-token=/var/run/secrets/infracluster/token"
+            - "--infra-cluster-ca=/var/run/secrets/infracluster/ca.crt"
           env:
             - name: KUBE_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: kubevirt_CONFIG
-              value: /tmp/config/kubevirt-config.yaml
+            - name: INFRACLUSTER_NAMESPACE
+              valueFrom:
+                secretKeyRef:
+                  name: infra-cluster-sa-secret
+                  key: namespace
+            - name: INFRACLUSTER_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: infra-cluster-sa-secret
+                  key: apiUrl
           volumeMounts:
-#            - name: kubelet-dir
-#              mountPath: /var/lib/kubelet
-#              mountPropagation: "Bidirectional"
+            - name: infracluster
+              mountPath: "/var/run/secrets/infracluster"
             - name: socket-dir
               mountPath: /csi
-            - name: config
-              mountPath: /tmp/config/
             - name: plugin-dir
               mountPath: /var/lib/kubelet/plugins
               mountPropagation: Bidirectional
@@ -115,6 +79,9 @@ spec:
               mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
       volumes:
+        - name: infracluster
+            secret:
+              secretName: infra-cluster-sa-secret
         - name: registration-dir
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
@@ -129,7 +96,7 @@ spec:
             type: Directory
         - name: socket-dir
           hostPath:
-            path: /var/lib/kubelet/plugins/kubevirt.org/
+            path: /var/lib/kubelet/plugins/kubevirt.io/
             type: DirectoryOrCreate
         - name: host-dev
           hostPath:
@@ -137,8 +104,6 @@ spec:
         - name: udev
           hostPath:
             path: /run/udev
-        - name: config
-          emptyDir: {}
         - name: mountpoint-dir
           hostPath:
             path: /var/lib/kubelet/pods

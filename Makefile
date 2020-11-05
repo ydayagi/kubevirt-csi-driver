@@ -17,7 +17,7 @@ test:
 # Build the binary
 .PHONY: build
 build:
-	go build -o $(BINDIR)/kubevirt-csi-driver -ldflags '-X version.Version=$(REV)' github.com/kubevirt/csi-driver/cmd/kubevirt-csi-driver
+	GOOS="linux" GOARCH="amd64" go build -o $(BINDIR)/kubevirt-csi-driver -ldflags '-X version.Version=$(REV)' github.com/kubevirt/csi-driver/cmd/kubevirt-csi-driver
 
 .PHONY: verify
 verify: fmt vet

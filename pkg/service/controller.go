@@ -3,36 +3,37 @@ package service
 import (
 	"strconv"
 
-	"k8s.io/client-go/dynamic"
-
-	"github.com/container-storage-interface/spec/lib/go/csi"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/klog"
+	"k8s.io/client-go/dynamic"
 	v1 "kubevirt.io/client-go/api/v1"
 	"kubevirt.io/client-go/kubecli"
+
+	"github.com/container-storage-interface/spec/lib/go/csi"
+
+	"golang.org/x/net/context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog"
 	cdiv1 "kubevirt.io/containerized-data-importer/pkg/apis/core/v1alpha1"
 )
 
 const (
 	ParameterThinProvisioning      = "thinProvisioning"
-	InfraNamespace                 = "default"
 	infraStorageClassNameParameter = "infraStorageClassName"
 	busParameter                   = "bus"
 )
 
 //ControllerService implements the controller interface
 type ControllerService struct {
-	infraClusterClient dynamic.Interface
-	kubevirtClient     kubecli.KubevirtClient
-	tenantClustrClient dynamic.Interface
+	infraClusterClient    dynamic.Interface
+	kubevirtClient        kubecli.KubevirtClient
+	tenantClustrClient    dynamic.Interface
+	infraClusterNamespace string
 }
 
 var ControllerCaps = []csi.ControllerServiceCapability_RPC_Type{
@@ -74,12 +75,12 @@ func (c *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 	unstructuredObj := &unstructured.Unstructured{}
 	unstructuredObj.SetUnstructuredContent(resultMap)
 	// Which namespace to use?
-	_, err = c.infraClusterClient.Resource(resource).Namespace(InfraNamespace).Create(ctx, unstructuredObj, metav1.CreateOptions{})
+	_, err = c.infraClusterClient.Resource(resource).Namespace(c.infraClusterNamespace).Create(unstructuredObj, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	unstructuredObj, err = c.infraClusterClient.Resource(resource).Namespace(InfraNamespace).Get(ctx, dv.Name, metav1.GetOptions{})
+	unstructuredObj, err = c.infraClusterClient.Resource(resource).Namespace(c.infraClusterNamespace).Get(dv.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +113,8 @@ func (c *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return nil, err
 	}
 
-	err = c.kubevirtClient.DeleteDataVolume(InfraNamespace, dvName, true)
+	err = c.infraClusterClient.Resource(getDvGroupVersionResource()).Namespace(c.infraClusterNamespace).Delete(dvName, &metav1.DeleteOptions{})
+	//err = c.kubevirtClient.DeleteDataVolume(c.infraClusterNamespace, dvName, true)
 	return &csi.DeleteVolumeResponse{}, err
 }
 
@@ -167,7 +169,7 @@ func (c *ControllerService) ControllerPublishVolume(
 		},
 		Ephemeral: false,
 	}
-	err := c.kubevirtClient.VirtualMachine(namespace).AddVolume(vmName, hotplugRequest)
+	err = c.kubevirtClient.VirtualMachine(c.infraClusterNamespace).AddVolume(vmName, hotplugRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +178,7 @@ func (c *ControllerService) ControllerPublishVolume(
 }
 
 //ControllerUnpublishVolume detaches the disk from the VM.
-func (c *ControllerService) ControllerUnpublishVolume(_ context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+func (c *ControllerService) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
 	// req.NodeId == kubevirt VM name
 	klog.Infof("Detaching DataVolume UID %s from Node ID %s", req.VolumeId, req.NodeId)
 
@@ -206,7 +208,7 @@ func (c *ControllerService) ControllerUnpublishVolume(_ context.Context, req *cs
 			Name: diskName,
 		},
 	}
-	err := c.kubevirtClient.VirtualMachine(namespace).RemoveVolume(vmName, hotplugRequest)
+	err = c.kubevirtClient.VirtualMachine(c.infraClusterNamespace).RemoveVolume(vmName, hotplugRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +282,7 @@ func (c *ControllerService) ControllerGetVolume(ctx context.Context, request *cs
 func (c *ControllerService) getDataVolumeNameByUID(ctx context.Context, uid string) (string, error) {
 	resource := getDvGroupVersionResource()
 
-	list, err := c.infraClusterClient.Resource(resource).Namespace(InfraNamespace).List(ctx, metav1.ListOptions{})
+	list, err := c.infraClusterClient.Resource(resource).Namespace(c.infraClusterNamespace).List(metav1.ListOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -306,7 +308,7 @@ func (c *ControllerService) getDataVolumeNameByUID(ctx context.Context, uid stri
 func (c *ControllerService) getNodeNameByUID(ctx context.Context, uid string) (string, error) {
 	resource := getNodesGroupVersionResource()
 
-	list, err := c.infraClusterClient.Resource(resource).List(ctx, metav1.ListOptions{})
+	list, err := c.infraClusterClient.Resource(resource).List(metav1.ListOptions{})
 	if err != nil {
 		return "", err
 	}
