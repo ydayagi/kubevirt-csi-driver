@@ -1,9 +1,10 @@
 package service
 
 import (
-	"k8s.io/klog"
+	klog "github.com/sirupsen/logrus" //"k8s.io/klog"
 	"kubevirt.io/client-go/kubecli"
 
+	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -20,11 +21,11 @@ type kubevirtCSIDriver struct {
 }
 
 // NewkubevirtCSIDriver creates a driver instance
-func NewkubevirtCSIDriver(infraClusterClient dynamic.Interface, kubevirtClient kubecli.KubevirtClient, tenantClusterClient dynamic.Interface, nodeId string, infraClusterNamespace string) *kubevirtCSIDriver {
+func NewkubevirtCSIDriver(internalInfraClient kubevirt.Client, infraClusterClient dynamic.Interface, kubevirtClient kubecli.KubevirtClient, nodeId string, infraClusterNamespace string) *kubevirtCSIDriver {
 	d := kubevirtCSIDriver{
-		IdentityService:   &IdentityService{},
-		ControllerService: &ControllerService{infraClusterClient, kubevirtClient, tenantClusterClient, infraClusterNamespace},
-		NodeService:       &NodeService{nodeId: nodeId, kubevirtClient: kubevirtClient},
+		IdentityService:   &IdentityService{internalInfraClient},
+		ControllerService: &ControllerService{infraClusterClient, kubevirtClient, infraClusterNamespace},
+		NodeService:       &NodeService{nodeId: nodeId, infraClusterClient: infraClusterClient, kubevirtClient: kubevirtClient},
 	}
 	return &d
 }

@@ -6,7 +6,7 @@ RUN make build
 
 FROM fedora:32
 
-RUN dnf install -y e2fsprogs xfsprogs
+#RUN dnf install -y e2fsprogs xfsprogs
 COPY --from=builder /src/kubevirt-csi-driver/bin/kubevirt-csi-driver .
 
 ENTRYPOINT ["./kubevirt-csi-driver"]

@@ -1,8 +1,6 @@
 package service
 
 import (
-	"strconv"
-
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -14,11 +12,11 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
+	klog "github.com/sirupsen/logrus" //"k8s.io/klog"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/klog"
 	cdiv1 "kubevirt.io/containerized-data-importer/pkg/apis/core/v1alpha1"
 )
 
@@ -32,7 +30,6 @@ const (
 type ControllerService struct {
 	infraClusterClient    dynamic.Interface
 	kubevirtClient        kubecli.KubevirtClient
-	tenantClustrClient    dynamic.Interface
 	infraClusterNamespace string
 }
 
@@ -43,7 +40,7 @@ var ControllerCaps = []csi.ControllerServiceCapability_RPC_Type{
 
 //CreateVolume creates the disk for the request, unattached from any VM
 func (c *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
-	klog.Infof("Creating disk %s", req.Name)
+	klog.Infof("Creating volume %s", req.Name)
 
 	// Create DataVolume object
 	// Create DataVolume resource in infra cluster
@@ -53,51 +50,49 @@ func (c *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	storageClassName := req.Parameters[infraStorageClassNameParameter]
 	volumeMode := corev1.PersistentVolumeFilesystem // TODO: get it from req.VolumeCapabilities
+	storageSize := req.GetCapacityRange().GetRequiredBytes()
 	dv.Name = req.Name
+	dv.Namespace = c.infraClusterNamespace
+	dv.Kind = "DataVolume"
+	dv.APIVersion = cdiv1.SchemeGroupVersion.String()
 	dv.Spec.PVC = &corev1.PersistentVolumeClaimSpec{
 		AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 		StorageClassName: &storageClassName,
 		VolumeMode:       &volumeMode,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceRequestsStorage: *resource.NewScaledQuantity(req.GetCapacityRange().GetRequiredBytes(), 0)},
+				corev1.ResourceStorage: *resource.NewScaledQuantity(storageSize, 0)},
 		},
 	}
+	dv.Spec.Source.Blank = &cdiv1.DataVolumeBlankImage{}
 	bus := req.Parameters[busParameter]
 
 	resource := getDvGroupVersionResource()
 
 	resultMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dv)
 	if err != nil {
+		klog.Error("Failed creating unstructured object from DataVolume object")
 		return nil, err
 	}
 
 	unstructuredObj := &unstructured.Unstructured{}
 	unstructuredObj.SetUnstructuredContent(resultMap)
-	// Which namespace to use?
 	_, err = c.infraClusterClient.Resource(resource).Namespace(c.infraClusterNamespace).Create(unstructuredObj, metav1.CreateOptions{})
 	if err != nil {
+		klog.Error("Failed creating DataVolume")
 		return nil, err
 	}
 
 	unstructuredObj, err = c.infraClusterClient.Resource(resource).Namespace(c.infraClusterNamespace).Get(dv.Name, metav1.GetOptions{})
 	if err != nil {
+		klog.Error("Failed getting DataVolume")
 		return nil, err
 	}
 
-	//1. idempotence first - see if disk already exists, kubevirt creates disk by name(alias in kubevirt as well)
-	//c.kubevirtClient.ListDataVolumeNames(req.GetName())
-
-	// 2. create the data volume if it doesn't exist.
-	// TODO kubevirt client needs a Creat function.
-
-	// TODO support for thin/thick provisioning from the storage class parameters
-	_, _ = strconv.ParseBool(req.Parameters[ParameterThinProvisioning])
-
-	// 3. return a response TODO stub values for now
+	// Return response
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
-			CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
+			CapacityBytes: storageSize,
 			VolumeId:      string(unstructuredObj.GetUID()),
 			VolumeContext: map[string]string{busParameter: bus},
 		},
@@ -114,7 +109,6 @@ func (c *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	}
 
 	err = c.infraClusterClient.Resource(getDvGroupVersionResource()).Namespace(c.infraClusterNamespace).Delete(dvName, &metav1.DeleteOptions{})
-	//err = c.kubevirtClient.DeleteDataVolume(c.infraClusterNamespace, dvName, true)
 	return &csi.DeleteVolumeResponse{}, err
 }
 
@@ -122,7 +116,6 @@ func (c *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 func (c *ControllerService) ControllerPublishVolume(
 	ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 
-	// req.NodeId == kubevirt VM name
 	klog.Infof("Attaching DataVolume UID %s to Node ID %s", req.VolumeId, req.NodeId)
 
 	// Get DataVolume name by ID
@@ -136,6 +129,8 @@ func (c *ControllerService) ControllerPublishVolume(
 	if err != nil {
 		return nil, err
 	}
+
+	vmName = "ydayagi-vm-2-centos"
 
 	// Determine disk name (disk-<DataVolume-name>)
 	diskName := "disk-" + dvName
@@ -183,16 +178,15 @@ func (c *ControllerService) ControllerUnpublishVolume(ctx context.Context, req *
 	klog.Infof("Detaching DataVolume UID %s from Node ID %s", req.VolumeId, req.NodeId)
 
 	// Get DataVolume name by ID
-	dvName, err := c.getDataVolumeNameByUID(ctx, req.VolumeId)
-	if err != nil {
-		return nil, err
-	}
+	dvName := req.VolumeId
 
 	// Get VM name
 	vmName, err := c.getNodeNameByUID(ctx, req.NodeId)
 	if err != nil {
 		return nil, err
 	}
+
+	vmName = "ydayagi-vm-2-centos"
 
 	// Determine disk name (disk-<DataVolume-name>)
 	diskName := "disk-" + dvName

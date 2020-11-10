@@ -9,18 +9,23 @@ require (
 	github.com/kubernetes-csi/csi-lib-utils v0.7.0
 	github.com/onsi/ginkgo v1.12.1
 	github.com/onsi/gomega v1.10.1
+	github.com/sirupsen/logrus v1.6.0
 	golang.org/x/net v0.0.0-20200602114024-627f9648deb9
 	google.golang.org/grpc v1.27.0
 	k8s.io/api v0.19.0-rc.2
 	k8s.io/apimachinery v0.19.0-rc.2
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/klog v1.0.0
+	//k8s.io/klog v1.0.0
+	k8s.io/klog/v2 v2.3.0 // indirect
 	k8s.io/utils v0.0.0-20200720150651-0bdb4ca86cbc
 	kubevirt.io/client-go v0.35.0-rc.0
 	kubevirt.io/containerized-data-importer v1.25.0
 )
 
 replace (
+
+	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
 	github.com/go-kit/kit => github.com/go-kit/kit v0.3.0
 	github.com/go-openapi/spec => github.com/go-openapi/spec v0.19.3
 	github.com/golang/glog => github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b

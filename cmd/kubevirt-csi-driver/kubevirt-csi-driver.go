@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -9,15 +8,16 @@ import (
 	"os"
 	"time"
 
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"kubevirt.io/client-go/kubecli"
 
 	certutil "k8s.io/client-go/util/cert"
 
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog"
+	klog "github.com/sirupsen/logrus" //"k8s.io/klog"
 
 	"github.com/kubevirt/csi-driver/pkg/kubevirt"
 	"github.com/kubevirt/csi-driver/pkg/service"
@@ -35,7 +35,7 @@ var (
 
 func init() {
 	flag.Set("logtostderr", "true")
-	klog.InitFlags(flag.CommandLine)
+	//klog.InitFlags(flag.CommandLine)
 }
 
 func main() {
@@ -49,11 +49,23 @@ func handle() {
 	if service.VendorVersion == "" {
 		klog.Fatalf("VendorVersion must be set at compile time")
 	}
-	klog.V(2).Infof("Driver vendor %v %v", service.VendorName, service.VendorVersion)
+	//klog.V(2).Infof("Driver vendor %v %v", service.VendorName, service.VendorVersion)
+	klog.Infof("Driver vendor %v %v", service.VendorName, service.VendorVersion)
+
+	tenantConfig, err := rest.InClusterConfig()
+	if err != nil {
+		klog.Fatalf("Failed to build tenant cluster config: %v", err)
+	}
+
+	tenantClientSet, err := kubernetes.NewForConfig(tenantConfig)
+	if err != nil {
+		klog.Fatalf("Failed to build tenant client set: %v", err)
+	}
 
 	infraClusterConfig, err := buildInfraClusterConfig(*infraClusterApiUrl, *infraClusterToken, *infraClusterCA)
 	if err != nil {
-		klog.V(2).Infof("Failed to build infra cluster config %v", err)
+		//klog.V(2).Infof("Failed to build infra cluster config %v", err)
+		klog.Infof("Failed to build infra cluster config %v", err)
 	}
 
 	infraClusterClient, err := dynamic.NewForConfig(infraClusterConfig)
@@ -66,12 +78,15 @@ func handle() {
 		klog.Fatal(err)
 	}
 
-	// TODO revise the assumption that the  current running node name should be the infracluster VM name.
+	var nodeId string
 	if *nodeName != "" {
-		_, err = virtClient.GetVMI(context.Background(), *infraClusterNamespace, *nodeName)
+		node, err := tenantClientSet.CoreV1().Nodes().Get(*nodeName, v1.GetOptions{})
 		if err != nil {
-			klog.Fatal(fmt.Errorf("failed to find a VM in the infra cluster with that name %v: %v", nodeName, err))
+			klog.Fatal(fmt.Errorf("failed to find node by name %v: %v", nodeName, err))
 		}
+
+		// systemUUID is the VM ID
+		nodeId = node.Status.NodeInfo.SystemUUID
 	}
 
 	kubevirtClient, err := kubecli.GetKubevirtClientFromRESTConfig(infraClusterConfig)
@@ -79,16 +94,7 @@ func handle() {
 		klog.Fatal(err)
 	}
 
-	tenantConfig, err := clientcmd.BuildConfigFromFlags("", "")
-	if err != nil {
-		klog.Fatal(err)
-	}
-	tenantClusterClient, err := dynamic.NewForConfig(tenantConfig)
-	if err != nil {
-		klog.Fatal(err)
-	}
-
-	driver := service.NewkubevirtCSIDriver(infraClusterClient, kubevirtClient, tenantClusterClient, *nodeName, *infraClusterNamespace)
+	driver := service.NewkubevirtCSIDriver(virtClient, infraClusterClient, kubevirtClient, nodeId, *infraClusterNamespace)
 
 	driver.Run(*endpoint)
 }
