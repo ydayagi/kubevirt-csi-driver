@@ -11,7 +11,7 @@ import (
 var (
 	// set by ldflags
 	VendorVersion = "0.1.1"
-	VendorName    = "csi.kubevirt.org"
+	VendorName    = "csi.kubevirt.io"
 )
 
 type kubevirtCSIDriver struct {
@@ -24,7 +24,7 @@ type kubevirtCSIDriver struct {
 func NewkubevirtCSIDriver(internalInfraClient kubevirt.Client, infraClusterClient dynamic.Interface, kubevirtClient kubecli.KubevirtClient, nodeId string, infraClusterNamespace string) *kubevirtCSIDriver {
 	d := kubevirtCSIDriver{
 		IdentityService:   &IdentityService{internalInfraClient},
-		ControllerService: &ControllerService{infraClusterClient, kubevirtClient, infraClusterNamespace},
+		ControllerService: &ControllerService{kubevirtClient, infraClusterNamespace},
 		NodeService:       &NodeService{nodeId: nodeId, infraClusterClient: infraClusterClient, kubevirtClient: kubevirtClient},
 	}
 	return &d
