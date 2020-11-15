@@ -24,7 +24,7 @@ type kubevirtCSIDriver struct {
 func NewkubevirtCSIDriver(internalInfraClient kubevirt.Client, infraClusterClient dynamic.Interface, kubevirtClient kubecli.KubevirtClient, nodeId string, infraClusterNamespace string) *kubevirtCSIDriver {
 	d := kubevirtCSIDriver{
 		IdentityService:   &IdentityService{internalInfraClient},
-		ControllerService: &ControllerService{kubevirtClient, infraClusterNamespace},
+		ControllerService: &ControllerService{internalInfraClient, infraClusterNamespace},
 		NodeService:       &NodeService{nodeId: nodeId, infraClusterClient: infraClusterClient, kubevirtClient: kubevirtClient},
 	}
 	return &d

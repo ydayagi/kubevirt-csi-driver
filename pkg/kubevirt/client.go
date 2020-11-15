@@ -8,12 +8,11 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	kubevirtapiv1 "kubevirt.io/client-go/api/v1"
 	"kubevirt.io/client-go/kubecli"
-	csiv1alpha1 "kubevirt.io/containerized-data-importer/pkg/apis/core/v1alpha1"
+	cdiv1alpha1 "kubevirt.io/containerized-data-importer/pkg/apis/core/v1alpha1"
 )
 
 //go:generate mockgen -source=./client.go -destination=./mock/client_generated.go -package=mock
@@ -27,30 +26,43 @@ type Client interface {
 	GetNamespace(ctx context.Context, name string) (*corev1.Namespace, error)
 	ListNamespace(ctx context.Context) (*corev1.NamespaceList, error)
 	GetStorageClass(ctx context.Context, name string) (*storagev1.StorageClass, error)
-	ListVirtualMachineNames(namespace string, requiredLabels map[string]string) ([]string, error)
+	ListVirtualMachines(namespace string) ([]kubevirtapiv1.VirtualMachineInstance, error)
 	DeleteDataVolume(namespace string, name string) error
-	CreateDataVolume(namespace string, name string) error
-	GetDataVolume(namespace string, name string) (*csiv1alpha1.DataVolume, error)
-	ListDataVolumeNames(namespace string, requiredLabels map[string]string) ([]csiv1alpha1.DataVolume, error)
+	CreateDataVolume(namespace string, dataVolume *cdiv1alpha1.DataVolume) (*cdiv1alpha1.DataVolume, error)
+	GetDataVolume(namespace string, name string) (*cdiv1alpha1.DataVolume, error)
+	ListDataVolumes(namespace string) ([]cdiv1alpha1.DataVolume, error)
 	GetVMI(ctx context.Context, namespace string, name string) (*kubevirtapiv1.VirtualMachineInstance, error)
+	AddVolumeToVM(namespace string, vmName string, hotPlugRequest *kubevirtapiv1.HotplugVolumeRequest) error
+	RemoveVolumeFromVM(namespace string, vmName string, hotPlugRequest *kubevirtapiv1.HotplugVolumeRequest) error
 }
 
 type client struct {
 	kubernetesClient *kubernetes.Clientset
 	virtClient       kubecli.KubevirtClient
-	dynamicClient    dynamic.Interface
 }
 
-func (c *client) ListVirtualMachineNames(namespace string, requiredLabels map[string]string) ([]string, error) {
-	panic("implement me")
+func (c *client) AddVolumeToVM(namespace string, vmName string, hotPlugRequest *kubevirtapiv1.HotplugVolumeRequest) error {
+	return c.virtClient.VirtualMachine(namespace).AddVolume(vmName, hotPlugRequest)
 }
 
-func (c *client) CreateDataVolume(namespace string, name string) error {
-	panic("implement me")
+func (c *client) RemoveVolumeFromVM(namespace string, vmName string, hotPlugRequest *kubevirtapiv1.HotplugVolumeRequest) error {
+	return c.virtClient.VirtualMachine(namespace).RemoveVolume(vmName, hotPlugRequest)
+}
+
+func (c *client) ListVirtualMachines(namespace string) ([]kubevirtapiv1.VirtualMachineInstance, error) {
+	list, err := c.virtClient.VirtualMachineInstance(namespace).List(&metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func (c *client) CreateDataVolume(namespace string, dataVolume *cdiv1alpha1.DataVolume) (*cdiv1alpha1.DataVolume, error) {
+	return c.virtClient.CdiClient().CdiV1alpha1().DataVolumes(namespace).Create(dataVolume)
 }
 
 // New creates our client wrapper object for the actual kubeVirt and kubernetes clients we use.
-func NewClient(config *rest.Config ) (Client, error) {
+func NewClient(config *rest.Config) (Client, error) {
 	result := &client{}
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -58,12 +70,6 @@ func NewClient(config *rest.Config ) (Client, error) {
 		return nil, err
 	}
 	result.kubernetesClient = clientset
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
-	result.dynamicClient = dynamicClient
 
 	kubevirtClient, err := kubecli.GetKubevirtClientFromRESTConfig(config)
 	if err != nil {
@@ -109,20 +115,20 @@ func (c *client) ListVirtualMachineInstancesNames(namespace string, requiredLabe
 }
 
 func (c *client) DeleteDataVolume(namespace string, name string) error {
-	return c.virtClient.CdiClient().CdiV1alpha1().DataVolumes(namespace).Delete(name, nil)
+	return c.virtClient.CdiClient().CdiV1alpha1().DataVolumes(namespace).Delete(name, &metav1.DeleteOptions{})
 }
 
-func (c *client) ListDataVolumeNames(namespace string, requiredLabels map[string]string) ([]csiv1alpha1.DataVolume, error) {
+func (c *client) ListDataVolumes(namespace string) ([]cdiv1alpha1.DataVolume, error) {
 	list, err := c.virtClient.CdiClient().CdiV1alpha1().
 		DataVolumes(namespace).
-		List(metav1.ListOptions{LabelSelector: labels.FormatLabels(requiredLabels)})
+		List(metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 	return list.Items, nil
 }
 
-func (c *client) GetDataVolume(namespace string, name string) (*csiv1alpha1.DataVolume, error) {
+func (c *client) GetDataVolume(namespace string, name string) (*cdiv1alpha1.DataVolume, error) {
 	get, err := c.virtClient.CdiClient().CdiV1alpha1().DataVolumes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -131,6 +137,6 @@ func (c *client) GetDataVolume(namespace string, name string) (*csiv1alpha1.Data
 }
 
 func (c *client) GetVMI(_ context.Context, namespace string, name string) (*kubevirtapiv1.VirtualMachineInstance, error) {
-	vm, err := c.virtClient.VirtualMachineInstance(namespace).Get(name, nil)
+	vm, err := c.virtClient.VirtualMachineInstance(namespace).Get(name, &metav1.GetOptions{})
 	return vm, err
 }
